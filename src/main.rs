@@ -1,11 +1,16 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::VecDeque,
+    path::{Path, PathBuf},
+};
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{
     fs,
-    io::{self, stdin, AsyncBufReadExt, BufReader},
+    io::{self, stdin, stdout, AsyncBufReadExt, AsyncWriteExt, BufReader},
+    process::Command,
+    sync::mpsc::{self, Receiver, Sender},
 };
 
 #[derive(Parser, Debug)]
@@ -27,6 +32,51 @@ struct WatchProcess {
     cmd: String,
     #[serde(default = "default_true")]
     log: bool,
+    #[serde(rename = "type")]
+    run_type: Option<RunType>,
+}
+
+impl WatchProcess {
+    async fn run(&self, sender: Sender<String>) -> Result<(), WatchError> {
+        let ty = self.run_type.as_ref().unwrap_or(&RunType::Cmd);
+        if *ty == RunType::Cmd {
+            let (cmd, args) =
+                self.cmd
+                    .split(' ')
+                    .fold(("", Vec::<&str>::new()), |(mut cmd, mut args), item| {
+                        if item.is_empty() {
+                            cmd = item;
+                        } else {
+                            args.push(item)
+                        }
+
+                        (cmd, args)
+                    });
+
+            let mut c = Command::new(cmd)
+                .args(args.iter())
+                .spawn()
+                .map_err(WatchError::IoChildProcess)?;
+            let stdout = c.stdout.take().unwrap();
+        } else {
+            let mut c = Command::new("bash")
+                .arg("-c")
+                .arg(&self.cmd)
+                .spawn()
+                .map_err(WatchError::IoChildProcess)?;
+            let stdout = c.stdout.take().unwrap();
+        };
+
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+enum RunType {
+    #[serde(rename = "shell")]
+    Shell,
+    #[serde(rename = "cmd")]
+    Cmd,
 }
 
 fn default_true() -> bool {
@@ -49,6 +99,9 @@ enum ConfigError {
 enum WatchError {
     #[error("config")]
     Config(#[from] ConfigError),
+
+    #[error("io failed to spawn child process")]
+    IoChildProcess(#[from] io::Error),
 }
 
 #[tokio::main]
@@ -94,4 +147,48 @@ async fn read_config_file_path<P: AsRef<Path>>(path: P) -> Result<Config, Config
     let config = fs::read_to_string(path.as_ref()).await?;
 
     serde_yaml::from_str(config.as_str()).map_err(ConfigError::Parse)
+}
+
+async fn run(cli: WatchMux, config: Config) -> Result<(), WatchError> {
+    let (tx, rx) = mpsc::channel::<String>(num_cpus::get_physical() * 2);
+
+    for process in config.processes.into_iter() {
+        let sender = tx.clone();
+        tokio::spawn(async move {
+            // TODO
+            let a = process.run(sender).await;
+        });
+    }
+
+    let mut w = StdoutWriter(rx);
+    let writer = w.write();
+    tokio::pin!(writer);
+
+    tokio::select! {
+        _ = &mut writer => {
+            // TODO
+        }
+    }
+    // TODO
+    // let cpus = num_cpus::get_physical();
+    // for _ in 0..cpus {
+    //     tokio::spawn(async move {
+
+    //         // TODO
+    //     });
+    // }
+    Ok(())
+}
+
+struct StdoutWriter(Receiver<String>);
+
+impl StdoutWriter {
+    async fn write(&mut self) {
+        let mut out = io::stdout();
+
+        while let Some(message) = self.0.recv().await {
+            // TOOD write to the stdout
+            let a = out.write_all(message.as_bytes()).await;
+        }
+    }
 }
