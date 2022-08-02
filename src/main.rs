@@ -1,16 +1,17 @@
 use std::{
-    collections::VecDeque,
     path::{Path, PathBuf},
+    process::Stdio,
 };
 
+use ansi_term::{Color, Style};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{
     fs,
     io::{self, stdin, stdout, AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::Command,
-    sync::mpsc::{self, Receiver, Sender},
+    process::{Child, Command},
+    sync::mpsc::{self, error::SendError, Receiver, Sender},
 };
 
 #[derive(Parser, Debug)]
@@ -44,7 +45,7 @@ impl WatchProcess {
                 self.cmd
                     .split(' ')
                     .fold(("", Vec::<&str>::new()), |(mut cmd, mut args), item| {
-                        if item.is_empty() {
+                        if cmd.is_empty() {
                             cmd = item;
                         } else {
                             args.push(item)
@@ -53,20 +54,50 @@ impl WatchProcess {
                         (cmd, args)
                     });
 
-            let mut c = Command::new(cmd)
+            let child = Command::new(cmd)
+                .stdout(Stdio::piped())
                 .args(args.iter())
                 .spawn()
                 .map_err(WatchError::IoChildProcess)?;
-            let stdout = c.stdout.take().unwrap();
+
+            self.execute_and_await(child, sender, &*self.title).await?
         } else {
-            let mut c = Command::new("bash")
+            let child = Command::new("bash")
+                .stdout(Stdio::piped())
                 .arg("-c")
                 .arg(&self.cmd)
                 .spawn()
                 .map_err(WatchError::IoChildProcess)?;
-            let stdout = c.stdout.take().unwrap();
+
+            self.execute_and_await(child, sender, &*self.title).await?
         };
 
+        Ok(())
+    }
+
+    async fn execute_and_await(
+        &self,
+        mut child: Child,
+        sender: Sender<String>,
+        title: &str,
+    ) -> Result<(), WatchError> {
+        let stdout = child.stdout.take().unwrap();
+        let mut lines = BufReader::new(stdout).lines();
+
+        let process_title = String::from(title);
+        tokio::spawn(async move {
+            if let Err(error) = child.wait().await {
+                eprintln!("child '{process_title}' process encountered error, {error}")
+            }
+        });
+
+        while let Some(line) = &lines.next_line().await? {
+            let title = Style::new()
+                .on(Color::Fixed(173))
+                .paint(format!("[ {title} ]>"));
+
+            sender.send(format!("{title} {line}\n")).await?;
+        }
         Ok(())
     }
 }
@@ -102,27 +133,22 @@ enum WatchError {
 
     #[error("io failed to spawn child process")]
     IoChildProcess(#[from] io::Error),
+
+    #[error("send failed to parent")]
+    SendError(#[from] SendError<String>),
 }
 
 #[tokio::main]
 async fn main() -> Result<(), WatchError> {
     let cli = WatchMux::parse();
-    println!("Hello, world!");
 
-    dbg!(&cli);
-
-    if cli.config.as_path().as_os_str() == "-" {
-        let config = read_config_file_stdin().await?;
-        dbg!(&config);
+    let config = if cli.config.as_path().as_os_str() == "-" {
+        read_config_file_stdin().await?
     } else {
-        let config = read_config_file_path(cli.config.as_path()).await?;
-        dbg!(&config);
-    }
+        read_config_file_path(cli.config.as_path()).await?
+    };
 
-    // process actions simultaneously
-    // multiplex output to the single stdout
-
-    Ok(())
+    run(config).await
 }
 
 async fn read_config_file_stdin() -> Result<Config, ConfigError> {
@@ -149,26 +175,29 @@ async fn read_config_file_path<P: AsRef<Path>>(path: P) -> Result<Config, Config
     serde_yaml::from_str(config.as_str()).map_err(ConfigError::Parse)
 }
 
-async fn run(cli: WatchMux, config: Config) -> Result<(), WatchError> {
-    let (tx, rx) = mpsc::channel::<String>(num_cpus::get_physical() * 2);
+async fn run(config: Config) -> Result<(), WatchError> {
+    // let (tx, rx) = mpsc::channel::<String>(num_cpus::get_physical() * 2);
+    let (tx, mut rx) = mpsc::channel::<String>(1024);
 
     for process in config.processes.into_iter() {
         let sender = tx.clone();
         tokio::spawn(async move {
-            // TODO
-            let a = process.run(sender).await;
+            process
+                .run(sender)
+                .await
+                .unwrap_or_else(|e| panic!("process {process:?} errored, error: {e:?}"));
         });
     }
 
-    let mut w = StdoutWriter(rx);
-    let writer = w.write();
-    tokio::pin!(writer);
+    // let mut w = StdoutWriter(rx);
+    // let writer = w.write();
+    // tokio::pin!(writer);
 
-    tokio::select! {
-        _ = &mut writer => {
-            // TODO
-        }
-    }
+    // tokio::select! {
+    //     _ = &mut writer => {
+    //         // TODO
+    //     }
+    // }
     // TODO
     // let cpus = num_cpus::get_physical();
     // for _ in 0..cpus {
@@ -177,6 +206,11 @@ async fn run(cli: WatchMux, config: Config) -> Result<(), WatchError> {
     //         // TODO
     //     });
     // }
+
+    let mut out = stdout();
+    while let Some(line) = rx.recv().await {
+        out.write_all(line.as_bytes()).await?
+    }
     Ok(())
 }
 
