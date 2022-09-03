@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     env, io,
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
@@ -37,6 +38,8 @@ pub struct WatchProcess {
     log: bool,
     #[serde(rename = "type")]
     run_type: Option<RunType>,
+    #[serde(default)]
+    env: HashMap<String, String>,
 }
 
 fn default_true() -> bool {
@@ -63,6 +66,7 @@ impl WatchProcess {
             let child = Command::new(cmd)
                 .stdout(Stdio::piped())
                 .args(args.iter())
+                .envs(&self.env)
                 .spawn()
                 .map_err(WatchError::IoChildProcess)?;
 
@@ -72,6 +76,7 @@ impl WatchProcess {
                 .stdout(Stdio::piped())
                 .arg("-c")
                 .arg(&self.cmd)
+                .envs(&self.env)
                 .spawn()
                 .map_err(WatchError::IoChildProcess)?;
 
