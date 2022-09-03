@@ -47,7 +47,7 @@ fn default_true() -> bool {
 }
 
 impl WatchProcess {
-    pub async fn run(&self, sender: Sender<String>) -> Result<(), WatchError> {
+    pub async fn run(&self, tx: Sender<String>) -> Result<(), WatchError> {
         let ty = self.run_type.as_ref().unwrap_or(&RunType::Cmd);
         if *ty == RunType::Cmd {
             let (cmd, args) =
@@ -70,7 +70,7 @@ impl WatchProcess {
                 .spawn()
                 .map_err(WatchError::IoChildProcess)?;
 
-            self.execute_and_await(child, sender, &*self.title).await?
+            self.execute_and_await(child, tx, &*self.title).await?
         } else {
             let child = Command::new("bash")
                 .stdout(Stdio::piped())
@@ -80,7 +80,7 @@ impl WatchProcess {
                 .spawn()
                 .map_err(WatchError::IoChildProcess)?;
 
-            self.execute_and_await(child, sender, &*self.title).await?
+            self.execute_and_await(child, tx, &*self.title).await?
         };
 
         Ok(())
