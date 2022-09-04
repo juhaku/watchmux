@@ -18,7 +18,6 @@ use tokio::{
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
-    pub filter: Option<String>,
     pub processes: Vec<WatchProcess>,
 }
 
@@ -136,7 +135,7 @@ pub enum ConfigError {
     Io(#[from] io::Error),
 }
 
-pub async fn read_config(path: Option<PathBuf>) -> Result<Config, ConfigError> {
+pub async fn load(path: Option<PathBuf>) -> Result<Config, ConfigError> {
     match path {
         Some(path) => {
             if path.as_path().as_os_str() == "-" {

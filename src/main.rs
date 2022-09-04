@@ -7,7 +7,55 @@ use thiserror::Error;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
 mod config;
+
+/// Multiplex your watch commands.
+///
+/// Watchmux can run any number of commands or custom shell scripts which will be
+/// executed with bash when type is set to `shell`. Shell scripts and commands can
+/// be named with title and they can be provided with additional set of environment
+/// variables. Commands and shell scripts are executed in parallel and each output
+/// will be multiplexed to single stdout. Currently hard limit for concurrent
+/// processes is 1024. Program will exit when all processes complete or by pressing
+/// <C-c> to terminate program.
+///
+/// Configuration file format is yaml listing processes to be executed:
+/// processes:
+///   - title: command title
+///     cmd: echo hello world $NAME
+///     type: shell
+///     env:
+///       NAME: Nate
+///
+/// * title: text shown left most of the output to distinct where the output is originated.
+/// * cmd: the actual command or shell script to exeucte e.g `cargo run` or with type `shell`
+///        this can multiline shell script e.g.
+///        cmd: |
+///          while [[ true == true ]]; do
+///             echo "this is true"
+///             sleep 1
+///          done
+/// * type: `shell` for shell script which are exeucted with `bash -c `cmd`.
+/// * env: map of environment variables to provided to `cmd`.
+///
+/// EXAMPLES:
+///
+/// Run wathcmux with `.watchmuxrc.yaml` in current directory:
+/// watchmux
+///
+/// Run watchmux with custom config file:
+/// watchmux -c path/to/config
+///
+/// Run watchmux with config from stdin:
+/// cat <<EOF | watchmux -c -
+/// processes:                                        
+///   - title: foobar
+///     cmd: echo foobar
+///     type: shell
+/// EOF
+///
+/// Run watchmux with
 #[derive(Parser, Debug)]
+#[clap(verbatim_doc_comment)]
 struct WatchMux {
     /// Path to the config file of watchmux.
     #[clap(short, long, value_name = "FILE")]
@@ -26,7 +74,7 @@ enum WatchmuxError {
 async fn main() -> Result<(), WatchmuxError> {
     let cli = WatchMux::parse();
 
-    let config = config::read_config(cli.config).await?;
+    let config = config::load(cli.config).await?;
 
     run(config).await.map_err(WatchmuxError::WatchError)
 }
