@@ -25,6 +25,8 @@ mod config;
 ///     type: shell
 ///     env:
 ///       NAME: Nate
+///   - title: cargo
+///     cmd: cargo run
 ///
 /// * title: text shown left most of the output to distinct where the output is originated.
 /// * cmd: the actual command or shell script to exeucte e.g `cargo run` or with type `shell`
@@ -34,7 +36,8 @@ mod config;
 ///             echo "this is true"
 ///             sleep 1
 ///          done
-/// * type: `shell` for shell script which are exeucted with `bash -c `cmd`.
+/// * type: `shell` or `cmd` which is default if not provided. `shell` for shell script which
+///   are exeucted with `bash -c `cmd`. `cmd` is executed as is and is expected to be found from $PATH.
 /// * env: map of environment variables to provided to `cmd`.
 ///
 /// EXAMPLES:
