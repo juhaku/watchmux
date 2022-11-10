@@ -58,7 +58,7 @@ mod config;
 ///
 /// Run watchmux with
 #[derive(Parser, Debug)]
-#[clap(verbatim_doc_comment)]
+#[clap(version, verbatim_doc_comment)]
 struct WatchMux {
     /// Path to the config file of watchmux.
     #[clap(short, long, value_name = "FILE")]
