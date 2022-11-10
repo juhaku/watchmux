@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    env, io,
+    env,
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
 };
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{
     fs,
-    io::{AsyncBufReadExt, BufReader},
+    io::{self, AsyncBufRead, AsyncBufReadExt, BufReader, Lines},
     process::{Child, Command},
     sync::mpsc::{error::SendError, Sender},
     task::JoinError,
@@ -64,23 +64,48 @@ impl WatchProcess {
 
             let child = Command::new(cmd)
                 .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .args(args.iter())
                 .envs(&self.env)
                 .spawn()
                 .map_err(WatchError::IoChildProcess)?;
 
-            self.execute_and_await(child, tx, &*self.title).await?
+            self.execute_and_await(child, tx, &self.title).await?
         } else {
             let child = Command::new("bash")
                 .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .arg("-c")
                 .arg(&self.cmd)
                 .envs(&self.env)
                 .spawn()
                 .map_err(WatchError::IoChildProcess)?;
 
-            self.execute_and_await(child, tx, &*self.title).await?
+            self.execute_and_await(child, tx, &self.title).await?
         };
+
+        Ok(())
+    }
+
+    async fn listen_out<T>(
+        mut out: Lines<T>,
+        title: String,
+        color: u8,
+        sender: Sender<String>,
+    ) -> Result<(), WatchError>
+    where
+        T: Unpin + Send + AsyncBufRead + 'static,
+    {
+        while let Ok(Some(line)) = out.next_line().await {
+            let title = Style::new()
+                .on(Color::Fixed(color))
+                .paint(format!("[ {title} ] "));
+
+            sender
+                .send(format!("{title} {line}\n"))
+                .await
+                .map_err(WatchError::SendError)?
+        }
 
         Ok(())
     }
@@ -92,17 +117,23 @@ impl WatchProcess {
         title: &str,
     ) -> Result<ExitStatus, WatchError> {
         let stdout = child.stdout.take().unwrap();
-        let mut lines = BufReader::new(stdout).lines();
+        let stderr = child.stderr.take().unwrap();
+        let stdout_lines = BufReader::new(stdout).lines();
+        let stderr_lines = BufReader::new(stderr).lines();
 
+        let (out, err) = tokio::join!(
+            WatchProcess::listen_out(stdout_lines, title.to_string(), 173, sender.clone()),
+            WatchProcess::listen_out(stderr_lines, title.to_string(), 167, sender),
+        );
         let child_process = tokio::spawn(async move { child.wait().await });
 
-        while let Some(line) = &lines.next_line().await? {
-            let title = Style::new()
-                .on(Color::Fixed(173))
-                .paint(format!("[ {title} ]>"));
-
-            sender.send(format!("{title} {line}\n")).await?;
-        }
+        if [out, err]
+            .into_iter()
+            .collect::<Result<(), WatchError>>()
+            .is_err()
+        {
+            child_process.abort()
+        };
 
         child_process.await?.map_err(WatchError::IoChildProcess)
     }
