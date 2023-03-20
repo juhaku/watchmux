@@ -39,6 +39,8 @@ pub struct WatchProcess {
     run_type: Option<RunType>,
     #[serde(default)]
     env: HashMap<String, String>,
+    #[serde(default)]
+    wait_for: String,
 }
 
 fn default_true() -> bool {
@@ -47,6 +49,27 @@ fn default_true() -> bool {
 
 impl WatchProcess {
     pub async fn run(&self, tx: Sender<String>) -> Result<(), WatchError> {
+        if !self.wait_for.is_empty() {
+            let child = Command::new("bash")
+                .arg("-c")
+                .arg(&self.wait_for)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .envs(&self.env)
+                .spawn()
+                .map_err(WatchError::IoChildProcess)?;
+
+            self.execute_and_await(child, tx.clone(), &self.title)
+                .await
+                .and_then(|status| {
+                    if status.success() {
+                        Ok(())
+                    } else {
+                        Err(WatchError::AwaitFor(status))
+                    }
+                })?;
+        };
+
         let ty = self.run_type.as_ref().unwrap_or(&RunType::Cmd);
         if *ty == RunType::Cmd {
             let (cmd, args) =
@@ -149,6 +172,9 @@ pub enum WatchError {
 
     #[error("send failed to parent")]
     SendError(#[from] SendError<String>),
+
+    #[error("await for failed with status: {0}, cannot proceed to run command!")]
+    AwaitFor(ExitStatus),
 }
 
 #[derive(Error, Debug)]

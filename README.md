@@ -44,6 +44,7 @@ processes:
       NAME: Nate
   - title: cargo
     cmd: cargo run
+    wait_for: while [[ $status -ne 200 ]]; do $status=0; sleep 1; done
 ```
 
 * **title**: text shown left most of the output to distinct where the output is originated.
@@ -59,6 +60,7 @@ processes:
 * **type**: `shell` or `cmd` which is default if not provided. `shell` for shell script which 
     are exeucted with bash -c `cmd`. `cmd` is executed as is and is expected to be found from `$PATH`
 * **env**: map of environment variables to provided to `cmd`.
+* **wait_for**: additonal command that need to complete before the `cmd` will be executed.
 
 ## Examples
 
