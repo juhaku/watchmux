@@ -10,7 +10,7 @@ will be multiplexed to single stdout. Currently hard limit for concurrent
 processes is 1024. Program will exit when all processes complete or by pressing
 `<C-c>` to terminate program.
 
-<video src="https://user-images.githubusercontent.com/26358664/188331152-4576fa69-2967-4a07-849a-fcd1e54f5952.mp4" controls></video>
+https://github.com/juhaku/watchmux/assets/26358664/99df340c-b5c6-4b6e-8561-9c5e6a654d4a
 
 ## Install
 
